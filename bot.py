@@ -1,55 +1,47 @@
-import ccxt
+import requests
 import pandas as pd
-import asyncio
-import time
+import asyncio, time
 from telegram import Bot
 from config import *
 from strategy import generate_signal
 
-# ✅ BYBIT – SAFE CONFIG
-exchange = ccxt.bybit({
-    "enableRateLimit": True,
-    "options": {
-        "defaultType": "swap"
-    }
-})
-
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# 🔒 HARD-CODED USDT PERPETUALS (SAFE)
+# ✅ SAFE USDT PERPETUAL SYMBOLS
 SYMBOLS = [
-    "BTC/USDT:USDT",
-    "ETH/USDT:USDT",
-    "BNB/USDT:USDT",
-    "SOL/USDT:USDT",
-    "XRP/USDT:USDT",
-    "ADA/USDT:USDT",
-    "AVAX/USDT:USDT",
-    "DOGE/USDT:USDT",
-    "DOT/USDT:USDT",
-    "LINK/USDT:USDT",
-    "MATIC/USDT:USDT",
-    "LTC/USDT:USDT",
-    "TRX/USDT:USDT",
-    "ATOM/USDT:USDT",
-    "OP/USDT:USDT",
-    "AR/USDT:USDT",
-    "NEAR/USDT:USDT",
-    "APT/USDT:USDT",
-    "SUI/USDT:USDT",
-    "INJ/USDT:USDT"
+    "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT",
+    "ADAUSDT","AVAXUSDT","DOGEUSDT","DOTUSDT","LINKUSDT",
+    "MATICUSDT","LTCUSDT","TRXUSDT","ATOMUSDT","OPUSDT",
+    "ARUSDT","NEARUSDT","APTUSDT","SUIUSDT","INJUSDT"
 ]
 
 last_signal = {}
 last_heartbeat = 0
+
+def fetch_ohlcv(symbol):
+    url = "https://api.bybit.com/v5/market/kline"
+    params = {
+        "category": "linear",
+        "symbol": symbol,
+        "interval": TIMEFRAME,
+        "limit": 100
+    }
+    r = requests.get(url, params=params, timeout=10).json()
+    data = r["result"]["list"]
+    df = pd.DataFrame(
+        data,
+        columns=["t","open","high","low","close","vol","turnover"]
+    )
+    df = df.astype(float)
+    df = df.sort_values("t")
+    return df
 
 async def send(msg):
     await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="HTML")
 
 async def scan():
     global last_heartbeat
-
-    await send("✅ <b>BYBIT FUTURES BOT STARTED</b>\nNo Spot Calls | Railway Safe")
+    await send("✅ <b>BYBIT FUTURES BOT STARTED</b>\nDirect API | No CCXT | Railway Safe")
 
     while True:
         now = time.time()
@@ -60,12 +52,7 @@ async def scan():
 
         for symbol in SYMBOLS:
             try:
-                ohlcv = exchange.fetch_ohlcv(symbol, TIMEFRAME, limit=100)
-                df = pd.DataFrame(
-                    ohlcv,
-                    columns=["t", "open", "high", "low", "close", "v"]
-                )
-
+                df = fetch_ohlcv(symbol)
                 signal = generate_signal(df, EMA_LENGTH, RR_RATIO)
 
                 if signal:
@@ -81,7 +68,7 @@ async def scan():
                     await send(
                         f"<b>{side} SIGNAL</b>\n"
                         f"📊 {symbol}\n"
-                        f"⏱ TF: {TIMEFRAME}\n\n"
+                        f"⏱ TF: {TIMEFRAME}m\n\n"
                         f"Entry: {entry:.4f}\n"
                         f"SL: {sl:.4f}\n"
                         f"TP: {tp:.4f}\n"
