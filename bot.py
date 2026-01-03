@@ -6,46 +6,45 @@ from strategy import generate_signal
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
+# 🔒 OKX USDT PERPETUALS (Top coins)
 SYMBOLS = [
-    "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT",
-    "ADAUSDT","AVAXUSDT","DOGEUSDT","DOTUSDT","LINKUSDT",
-    "MATICUSDT","LTCUSDT","TRXUSDT","ATOMUSDT","OPUSDT",
-    "ARUSDT","NEARUSDT","APTUSDT","SUIUSDT","INJUSDT"
+    "BTC-USDT-SWAP","ETH-USDT-SWAP","BNB-USDT-SWAP","SOL-USDT-SWAP",
+    "XRP-USDT-SWAP","ADA-USDT-SWAP","AVAX-USDT-SWAP","DOGE-USDT-SWAP",
+    "DOT-USDT-SWAP","LINK-USDT-SWAP","MATIC-USDT-SWAP","LTC-USDT-SWAP",
+    "TRX-USDT-SWAP","ATOM-USDT-SWAP","OP-USDT-SWAP","AR-USDT-SWAP",
+    "NEAR-USDT-SWAP","APT-USDT-SWAP","SUI-USDT-SWAP","INJ-USDT-SWAP"
 ]
 
 last_signal = {}
 last_heartbeat = 0
 
 def fetch_ohlcv(symbol):
-    url = "https://api.bybit.com/v5/market/kline"
+    url = "https://www.okx.com/api/v5/market/candles"
     params = {
-        "category": "linear",
-        "symbol": symbol,
-        "interval": TIMEFRAME,
+        "instId": symbol,
+        "bar": TIMEFRAME,
         "limit": 100
     }
 
     try:
         r = requests.get(url, params=params, timeout=10)
-
-        if r.status_code != 200:
-            raise Exception(f"HTTP {r.status_code}")
-
         data = r.json()
 
-        if data.get("retCode") != 0:
-            raise Exception(data.get("retMsg"))
+        if data.get("code") != "0":
+            return None
 
-        candles = data["result"]["list"]
+        candles = data["data"]
         if not candles:
-            raise Exception("No candles")
+            return None
 
         df = pd.DataFrame(
             candles,
-            columns=["t","open","high","low","close","vol","turnover"]
+            columns=["t","open","high","low","close","vol","volCcy","volCcyQuote","confirm"]
         )
-        df = df.astype(float)
-        return df.sort_values("t")
+
+        df = df[["t","open","high","low","close"]].astype(float)
+        df = df.sort_values("t")
+        return df
 
     except Exception as e:
         print(symbol, e)
@@ -57,13 +56,14 @@ async def send(msg):
 async def scan():
     global last_heartbeat
 
-    await send("✅ <b>BYBIT FUTURES BOT STARTED</b>\nStable JSON Handling Enabled")
+    await send("✅ <b>OKX FUTURES BOT STARTED</b>\nRailway Safe | EMA Strategy")
 
     while True:
         now = time.time()
 
+        # 💓 HEARTBEAT
         if now - last_heartbeat > HEARTBEAT_INTERVAL:
-            await send("💓 Bot Alive | EMA Strategy Running")
+            await send("💓 Bot Alive | Scanning OKX Futures")
             last_heartbeat = now
 
         for symbol in SYMBOLS:
@@ -87,7 +87,7 @@ async def scan():
             await send(
                 f"<b>{side} SIGNAL</b>\n"
                 f"📊 {symbol}\n"
-                f"⏱ TF: {TIMEFRAME}m\n\n"
+                f"⏱ TF: {TIMEFRAME}\n\n"
                 f"Entry: {entry:.4f}\n"
                 f"SL: {sl:.4f}\n"
                 f"TP: {tp:.4f}\n"
