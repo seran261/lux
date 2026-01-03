@@ -7,7 +7,7 @@ if not TELEGRAM_TOKEN or not CHAT_ID:
     print("❌ TELEGRAM_TOKEN or CHAT_ID missing")
     sys.exit(1)
 
-TIMEFRAME = "5"        # minutes (Bybit format)
+TIMEFRAME = "5"   # minutes
 EMA_LENGTH = 34
 RR_RATIO = 2.0
 
