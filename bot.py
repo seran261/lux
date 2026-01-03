@@ -1,13 +1,11 @@
-import requests
+import requests, time, asyncio
 import pandas as pd
-import asyncio, time
 from telegram import Bot
 from config import *
 from strategy import generate_signal
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# ✅ SAFE USDT PERPETUAL SYMBOLS
 SYMBOLS = [
     "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT",
     "ADAUSDT","AVAXUSDT","DOGEUSDT","DOTUSDT","LINKUSDT",
@@ -26,22 +24,40 @@ def fetch_ohlcv(symbol):
         "interval": TIMEFRAME,
         "limit": 100
     }
-    r = requests.get(url, params=params, timeout=10).json()
-    data = r["result"]["list"]
-    df = pd.DataFrame(
-        data,
-        columns=["t","open","high","low","close","vol","turnover"]
-    )
-    df = df.astype(float)
-    df = df.sort_values("t")
-    return df
+
+    try:
+        r = requests.get(url, params=params, timeout=10)
+
+        if r.status_code != 200:
+            raise Exception(f"HTTP {r.status_code}")
+
+        data = r.json()
+
+        if data.get("retCode") != 0:
+            raise Exception(data.get("retMsg"))
+
+        candles = data["result"]["list"]
+        if not candles:
+            raise Exception("No candles")
+
+        df = pd.DataFrame(
+            candles,
+            columns=["t","open","high","low","close","vol","turnover"]
+        )
+        df = df.astype(float)
+        return df.sort_values("t")
+
+    except Exception as e:
+        print(symbol, e)
+        return None
 
 async def send(msg):
     await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="HTML")
 
 async def scan():
     global last_heartbeat
-    await send("✅ <b>BYBIT FUTURES BOT STARTED</b>\nDirect API | No CCXT | Railway Safe")
+
+    await send("✅ <b>BYBIT FUTURES BOT STARTED</b>\nStable JSON Handling Enabled")
 
     while True:
         now = time.time()
@@ -51,33 +67,33 @@ async def scan():
             last_heartbeat = now
 
         for symbol in SYMBOLS:
-            try:
-                df = fetch_ohlcv(symbol)
-                signal = generate_signal(df, EMA_LENGTH, RR_RATIO)
+            df = fetch_ohlcv(symbol)
+            if df is None or len(df) < 50:
+                continue
 
-                if signal:
-                    side, entry, sl, tp = signal
-                    candle = df["t"].iloc[-1]
-                    key = f"{symbol}_{side}"
+            signal = generate_signal(df, EMA_LENGTH, RR_RATIO)
+            if not signal:
+                continue
 
-                    if last_signal.get(key) == candle:
-                        continue
+            side, entry, sl, tp = signal
+            candle = df["t"].iloc[-1]
+            key = f"{symbol}_{side}"
 
-                    last_signal[key] = candle
+            if last_signal.get(key) == candle:
+                continue
 
-                    await send(
-                        f"<b>{side} SIGNAL</b>\n"
-                        f"📊 {symbol}\n"
-                        f"⏱ TF: {TIMEFRAME}m\n\n"
-                        f"Entry: {entry:.4f}\n"
-                        f"SL: {sl:.4f}\n"
-                        f"TP: {tp:.4f}\n"
-                        f"RR: 1:{RR_RATIO}"
-                    )
-                    await asyncio.sleep(1)
+            last_signal[key] = candle
 
-            except Exception as e:
-                print(symbol, e)
+            await send(
+                f"<b>{side} SIGNAL</b>\n"
+                f"📊 {symbol}\n"
+                f"⏱ TF: {TIMEFRAME}m\n\n"
+                f"Entry: {entry:.4f}\n"
+                f"SL: {sl:.4f}\n"
+                f"TP: {tp:.4f}\n"
+                f"RR: 1:{RR_RATIO}"
+            )
+            await asyncio.sleep(1)
 
         await asyncio.sleep(SCAN_INTERVAL)
 
