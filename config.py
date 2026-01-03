@@ -1,13 +1,21 @@
-# ===== TELEGRAM =====
-TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-CHAT_ID = "YOUR_CHAT_ID"
+import os
+import sys
 
-# ===== STRATEGY =====
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+
+if not TELEGRAM_TOKEN:
+    print("❌ TELEGRAM_TOKEN missing in environment variables")
+    sys.exit(1)
+
+if not CHAT_ID:
+    print("❌ CHAT_ID missing in environment variables")
+    sys.exit(1)
+
 TIMEFRAME = "5m"
 EMA_LENGTH = 34
 RR_RATIO = 2.0
 
-# ===== BOT SETTINGS =====
-SCAN_INTERVAL = 60          # seconds
-HEARTBEAT_INTERVAL = 900    # 15 minutes
+SCAN_INTERVAL = 60
+HEARTBEAT_INTERVAL = 900
 MAX_COINS = 50
