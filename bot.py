@@ -6,7 +6,6 @@ from strategy import generate_signal
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# ===== OKX USDT PERPETUALS =====
 SYMBOLS = [
     "BTC-USDT-SWAP","ETH-USDT-SWAP","BNB-USDT-SWAP","SOL-USDT-SWAP",
     "XRP-USDT-SWAP","ADA-USDT-SWAP","AVAX-USDT-SWAP","DOGE-USDT-SWAP",
@@ -15,18 +14,14 @@ SYMBOLS = [
     "NEAR-USDT-SWAP","APT-USDT-SWAP","SUI-USDT-SWAP","INJ-USDT-SWAP"
 ]
 
-# ===== VOLUME SPIKE SETTINGS =====
-VOLUME_LOOKBACK = 20
-VOLUME_MULTIPLIER = 2.0   # 2x average volume
-
 last_signal = {}
-active_trades = {}
+active_trades = {}   # 🔑 TRACK OPEN TRADES
 last_heartbeat = 0
 
-# ===== FETCH OKX OHLCV =====
+# ===== OKX OHLCV =====
 def fetch_ohlcv(symbol):
     url = "https://www.okx.com/api/v5/market/candles"
-    params = {"instId": symbol, "bar": TIMEFRAME, "limit": 120}
+    params = {"instId": symbol, "bar": TIMEFRAME, "limit": 100}
 
     try:
         r = requests.get(url, params=params, timeout=10).json()
@@ -35,29 +30,18 @@ def fetch_ohlcv(symbol):
 
         df = pd.DataFrame(
             r["data"],
-            columns=["t","open","high","low","close","vol","volCcy","volQuote","confirm"]
+            columns=["t","open","high","low","close","vol","volCcy","volCcyQuote","confirm"]
         )
-
-        df = df[["t","open","high","low","close","vol"]].astype(float)
+        df = df[["t","open","high","low","close"]].astype(float)
         return df.sort_values("t")
 
     except Exception:
         return None
 
-# ===== VOLUME SPIKE CHECK =====
-def volume_spike(df):
-    if len(df) < VOLUME_LOOKBACK + 1:
-        return False
-
-    avg_vol = df["vol"].iloc[-(VOLUME_LOOKBACK+1):-1].mean()
-    curr_vol = df["vol"].iloc[-1]
-
-    return curr_vol >= avg_vol * VOLUME_MULTIPLIER
-
 async def send(msg):
     await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="HTML")
 
-# ===== TP / SL CHECK =====
+# ===== CHECK TP / SL =====
 async def check_trade(symbol, trade, candle):
     high = candle["high"]
     low = candle["low"]
@@ -84,21 +68,18 @@ async def check_trade(symbol, trade, candle):
 async def scan():
     global last_heartbeat
 
-    await send(
-        "✅ <b>OKX FUTURES BOT STARTED</b>\n"
-        "EMA + Volume Spike Filter Enabled"
-    )
+    await send("✅ <b>OKX FUTURES BOT STARTED</b>\nTP / SL Alerts Enabled")
 
     while True:
         now = time.time()
 
         if now - last_heartbeat > HEARTBEAT_INTERVAL:
-            await send("💓 Bot Alive | Volume-confirmed signals only")
+            await send("💓 Bot Alive | Monitoring trades")
             last_heartbeat = now
 
         for symbol in SYMBOLS:
             df = fetch_ohlcv(symbol)
-            if df is None or len(df) < 60:
+            if df is None or len(df) < 50:
                 continue
 
             last_candle = df.iloc[-1]
@@ -110,14 +91,10 @@ async def scan():
                     del active_trades[symbol]
                 continue
 
-            # 🔍 SIGNAL LOGIC
+            # 🔍 LOOK FOR NEW SIGNAL
             signal = generate_signal(df, EMA_LENGTH, RR_RATIO)
             if not signal:
                 continue
-
-            # 🔊 VOLUME SPIKE FILTER
-            if not volume_spike(df):
-                continue  # ❌ block low-volume signals
 
             side, entry, sl, tp = signal
             candle_time = df["t"].iloc[-1]
@@ -138,8 +115,7 @@ async def scan():
             await send(
                 f"<b>{side} SIGNAL</b>\n"
                 f"📊 {symbol}\n"
-                f"⏱ TF: {TIMEFRAME}\n"
-                f"🔊 Volume Spike: {VOLUME_MULTIPLIER}×\n\n"
+                f"⏱ TF: {TIMEFRAME}\n\n"
                 f"Entry: {entry:.4f}\n"
                 f"SL: {sl:.4f}\n"
                 f"TP: {tp:.4f}\n"
