@@ -7,7 +7,7 @@ TIMEFRAME = "5m"
 EMA_LENGTH = 34
 RR_RATIO = 2.0
 
-# ===== BOT =====
+# ===== BOT SETTINGS =====
 SCAN_INTERVAL = 60          # seconds
 HEARTBEAT_INTERVAL = 900    # 15 minutes
 MAX_COINS = 50
