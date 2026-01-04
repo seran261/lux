@@ -2,26 +2,26 @@ import requests, time, asyncio
 import pandas as pd
 from telegram import Bot
 from config import *
-from strategy import generate_signal
+from strategy import check_signal
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-SYMBOLS = [
-    "BTC-USDT-SWAP","ETH-USDT-SWAP","BNB-USDT-SWAP","SOL-USDT-SWAP",
-    "XRP-USDT-SWAP","ADA-USDT-SWAP","AVAX-USDT-SWAP","DOGE-USDT-SWAP",
-    "DOT-USDT-SWAP","LINK-USDT-SWAP","MATIC-USDT-SWAP","LTC-USDT-SWAP",
-    "TRX-USDT-SWAP","ATOM-USDT-SWAP","OP-USDT-SWAP","AR-USDT-SWAP",
-    "NEAR-USDT-SWAP","APT-USDT-SWAP","SUI-USDT-SWAP","INJ-USDT-SWAP"
-]
+SYMBOLS = {
+    "BTC": "BTC-USDT-SWAP",
+    "ETH": "ETH-USDT-SWAP",
+    "SOL": "SOL-USDT-SWAP",
+    "LTC": "LTC-USDT-SWAP",
+    "BNB": "BNB-USDT-SWAP",
+    "TAO": "TAO-USDT-SWAP"
+}
 
+active_trades = {}
 last_signal = {}
-active_trades = {}   # 🔑 TRACK OPEN TRADES
 last_heartbeat = 0
 
-# ===== OKX OHLCV =====
-def fetch_ohlcv(symbol):
+def fetch_ohlcv(symbol, tf):
     url = "https://www.okx.com/api/v5/market/candles"
-    params = {"instId": symbol, "bar": TIMEFRAME, "limit": 100}
+    params = {"instId": symbol, "bar": tf, "limit": 120}
 
     try:
         r = requests.get(url, params=params, timeout=10).json()
@@ -30,99 +30,78 @@ def fetch_ohlcv(symbol):
 
         df = pd.DataFrame(
             r["data"],
-            columns=["t","open","high","low","close","vol","volCcy","volCcyQuote","confirm"]
+            columns=["t","open","high","low","close","vol","v2","v3","confirm"]
         )
         df = df[["t","open","high","low","close"]].astype(float)
         return df.sort_values("t")
 
-    except Exception:
+    except:
         return None
+
+def calc_levels(side, entry):
+    sl = entry * (1 - STOP_LOSS_PCT/100) if side == "LONG" else entry * (1 + STOP_LOSS_PCT/100)
+    tps = []
+
+    for p in TP_LEVELS:
+        if side == "LONG":
+            tps.append(entry * (1 + p/100))
+        else:
+            tps.append(entry * (1 - p/100))
+
+    return sl, tps
 
 async def send(msg):
     await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="HTML")
 
-# ===== CHECK TP / SL =====
-async def check_trade(symbol, trade, candle):
-    high = candle["high"]
-    low = candle["low"]
-
-    if trade["side"] == "LONG":
-        if high >= trade["tp"]:
-            await send(f"🎯 <b>TP HIT</b>\n📊 {symbol}\nTP: {trade['tp']:.4f}")
-            return True
-        if low <= trade["sl"]:
-            await send(f"🛑 <b>SL HIT</b>\n📊 {symbol}\nSL: {trade['sl']:.4f}")
-            return True
-
-    if trade["side"] == "SHORT":
-        if low <= trade["tp"]:
-            await send(f"🎯 <b>TP HIT</b>\n📊 {symbol}\nTP: {trade['tp']:.4f}")
-            return True
-        if high >= trade["sl"]:
-            await send(f"🛑 <b>SL HIT</b>\n📊 {symbol}\nSL: {trade['sl']:.4f}")
-            return True
-
-    return False
-
-# ===== MAIN LOOP =====
 async def scan():
     global last_heartbeat
 
-    await send("✅ <b>OKX FUTURES BOT STARTED</b>\nTP / SL Alerts Enabled")
+    await send(
+        "✅ <b>OKX MULTI-TF BOT STARTED</b>\n"
+        "BTC ETH SOL LTC BNB TAO\n"
+        "5m → 1W | TP 1%–5%"
+    )
 
     while True:
         now = time.time()
 
         if now - last_heartbeat > HEARTBEAT_INTERVAL:
-            await send("💓 Bot Alive | Monitoring trades")
+            await send("💓 Bot Alive | Multi-TF EMA Strategy Running")
             last_heartbeat = now
 
-        for symbol in SYMBOLS:
-            df = fetch_ohlcv(symbol)
-            if df is None or len(df) < 50:
-                continue
+        for name, symbol in SYMBOLS.items():
+            for tf_name, tf in TIMEFRAMES.items():
 
-            last_candle = df.iloc[-1]
+                df = fetch_ohlcv(symbol, tf)
+                if df is None or len(df) < 50:
+                    continue
 
-            # 🔁 CHECK ACTIVE TRADE
-            if symbol in active_trades:
-                closed = await check_trade(symbol, active_trades[symbol], last_candle)
-                if closed:
-                    del active_trades[symbol]
-                continue
+                signal = check_signal(df, EMA_LENGTH)
+                if not signal:
+                    continue
 
-            # 🔍 LOOK FOR NEW SIGNAL
-            signal = generate_signal(df, EMA_LENGTH, RR_RATIO)
-            if not signal:
-                continue
+                candle_time = df["t"].iloc[-1]
+                key = f"{symbol}_{tf}_{signal}"
 
-            side, entry, sl, tp = signal
-            candle_time = df["t"].iloc[-1]
+                if last_signal.get(key) == candle_time:
+                    continue
 
-            key = f"{symbol}_{side}"
-            if last_signal.get(key) == candle_time:
-                continue
+                last_signal[key] = candle_time
+                entry = df["close"].iloc[-1]
+                sl, tps = calc_levels(signal, entry)
 
-            last_signal[key] = candle_time
+                tp_text = "\n".join([f"TP{i+1}: {tp:.4f}" for i, tp in enumerate(tps)])
 
-            active_trades[symbol] = {
-                "side": side,
-                "entry": entry,
-                "sl": sl,
-                "tp": tp
-            }
+                await send(
+                    f"<b>{signal} SIGNAL</b>\n"
+                    f"📊 {name}\n"
+                    f"⏱ TF: {tf_name}\n\n"
+                    f"Entry: {entry:.4f}\n"
+                    f"SL: {sl:.4f}\n"
+                    f"{tp_text}"
+                )
 
-            await send(
-                f"<b>{side} SIGNAL</b>\n"
-                f"📊 {symbol}\n"
-                f"⏱ TF: {TIMEFRAME}\n\n"
-                f"Entry: {entry:.4f}\n"
-                f"SL: {sl:.4f}\n"
-                f"TP: {tp:.4f}\n"
-                f"RR: 1:{RR_RATIO}"
-            )
-
-            await asyncio.sleep(1)
+                await asyncio.sleep(1)
 
         await asyncio.sleep(SCAN_INTERVAL)
 
